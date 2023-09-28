@@ -1,0 +1,284 @@
+Description: Final Exam - AWS CAD. CloudFormation Template
+
+# ------------------------------
+# Define any parameters
+# ------------------------------
+Parameters:
+  publicKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to be used woth public EC2 for SSH access
+
+  publicImageId:
+    Type: AWS::EC2::Image::Id
+    Description: ID of the Amazon Machine Image (AMI) to use for the public EC2 instance
+
+  publicInstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type for public EC2 
+  
+  privateKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access to be used with private EC2
+
+  privateImageId:
+    Type: AWS::EC2::Image::Id
+    Description: ID of the Amazon Machine Image (AMI) to use for the private EC2 instance
+
+  privateInstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type for private EC2
+
+
+# -----------------------------------------
+# Define all the resources to be created
+# -----------------------------------------
+Resources:
+
+  MetroDDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: metroddb
+      AttributeDefinitions:
+        - AttributeName: "StudentName"
+          AttributeType: "S"
+
+      KeySchema:
+        - AttributeName: "StudentName"
+          KeyType: HASH
+
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+
+  # VPC = MyVPC, CIDR = 10.50.0.0/16, 
+  # EnableDnsSupport: 'true', EnableDnsHostnames: 'true'
+  # Run the template in ca-central-1 region to create resources in ca-central-1 region
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.50.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+      - Key: stack
+        Value: production
+
+  # Creating the IGW 
+  myInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: stack
+        Value: production
+  
+  # Attaching the IWG to 'MyVPC'
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: myVPC
+      InternetGatewayId:
+        Ref: myInternetGateway
+
+  # Creating Public RT in VPC - MyVPC
+  myPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: myVPC
+      Tags:
+      - Key: stack
+        Value: production
+
+  # Adding Route for Destination as 0.0.0.0/0 and Target is IGW
+  # DependsOn: myInternetGateway <- Wait for IGW - myInternetGateway to be created 
+  myRoute:
+    Type: AWS::EC2::Route
+    DependsOn: myInternetGateway
+    Properties:
+       RouteTableId:
+         Ref: myPublicRouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId:
+         Ref: myInternetGateway
+
+  # ----------------------------------------------------------
+  # Creating subnet 1 & 2 with following configuration
+  # CIDR = 10.50.1.0/24, 10.50.2.0/24 respectivily
+  # Availability zone = ca-central-1a
+  # Attached to MyVPC
+  # MapPublicIpOnLaunch: true <- enables auto-assign public IP
+  # ----------------------------------------------------------
+  mySubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: myVPC
+      CidrBlock: 10.50.1.0/24
+      AvailabilityZone: "ca-central-1a"
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: stack
+        Value: production
+
+  mySubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: myVPC
+        CidrBlock: 10.50.2.0/24
+        AvailabilityZone: "ca-central-1a"
+        MapPublicIpOnLaunch: true
+        Tags:
+        - Key: stack
+          Value: production
+  
+  # -----------------------------------------------------------
+  # Creating subnet 3 & 4 with following configuration
+  # CIDR = 10.50.3.0/24, 10.50.4.0/24 respectivily
+  # Availability zone = ca-central-2a
+  # MapPublicIpOnLaunch: true <- enables auto-assign public IP
+  # -----------------------------------------------------------
+  mySubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: myVPC
+      CidrBlock: 10.50.3.0/24
+      AvailabilityZone: "ca-central-2a"
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: stack
+        Value: production
+  
+  mySubnet4:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: myVPC
+      CidrBlock: 10.40.4.0/24
+      AvailabilityZone: "ca-central-2a"
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: stack
+        Value: production
+
+  # Associating MySubnet1 to RT - myPublicRouteTable
+  mySubne1tRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: mySubnet1
+      RouteTableId:
+        Ref: myPublicRouteTable
+
+  # Associating MySubnet3 to RT - myPublicRouteTable
+  mySubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: mySubnet3
+      RouteTableId:
+        Ref: myPublicRouteTable
+
+
+  # Creating an EIP
+  myEIP:
+    Type: AWS::EC2::EIP
+
+  # Creating NAT-GT and associating MySubnet1 
+  myNATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+        AllocationId: !GetAtt myEIP.AllocationId
+        SubnetId: !Ref mySubnet1
+        Tags:
+        - Key: stack
+          Value: production
+
+  # Creating Private RT - myPrivateRouteTable in MyVPC
+  myPrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:  
+          Ref: myVPC
+        Tags:
+        - Key: stack
+          Value: production
+
+  # Adding Route for Destination as 0.0.0.0/0
+  # DependsOn: myPrivateRouteTable <- Wait RT to be created 
+  myPrivateRoute:
+      Type: AWS::EC2::Route
+      DependsOn: myPrivateRouteTable
+      Properties:
+        RouteTableId:
+          Ref: myPrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId:
+          Ref: myNATGateway
+
+  # Associating MySubnet2 to RT - myPrivateRouteTable
+  mySubne2tRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: mySubnet2
+        RouteTableId:
+          Ref: myPrivateRouteTable
+
+  # Associating MySubnet4 to RT - myPrivateRouteTable
+  mySubne4tRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: mySubnet4
+        RouteTableId:
+          Ref: myPrivateRouteTable
+
+  # Creating Security Group with 
+  # Ingress port = 22 & 80 for 0.0.0.0/0
+  myInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to client host
+      VpcId: !Ref myVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # Creating EC2 in MySubnet1 using SG created above
+  # and KeyPair value inputed by user
+  MyPublicEC2Instance: 
+      Type: AWS::EC2::Instance
+      Properties: 
+        ImageId: !Ref publicImageId
+        KeyName: !Ref publicKeyName
+        InstanceType: !Ref publicInstanceType
+        SecurityGroupIds:
+          - !Ref myInstanceSecurityGroup
+        SubnetId:
+          - !Ref mySubnet1
+
+  # Creating EC2 in MySubnet1 using SG created above
+  # and KeyPair value inputed by user
+  MyPrivateEC2Instance: 
+      Type: AWS::EC2::Instance
+      Properties: 
+        ImageId: !Ref privateImageId
+        KeyName: !Ref privateKeyName
+        InstanceType: !Ref privateInstanceType
+        SecurityGroupIds:
+          - !Ref myInstanceSecurityGroup
+        SubnetId:
+          - !Ref mySubnet3
+
